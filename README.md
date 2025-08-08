@@ -1,0 +1,1 @@
+# AI-Powered-Market-Trend-Forecasting-and-Dynamic-Pricing-System-for-Revenue-Optimization
