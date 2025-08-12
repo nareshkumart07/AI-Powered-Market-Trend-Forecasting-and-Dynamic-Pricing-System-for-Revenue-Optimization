@@ -34,6 +34,20 @@ daily_sales_df['rolling_mean_30_days'] = daily_sales_df['Quantity'].shift(1).rol
 daily_sales_df['rolling_std_7_days'] = daily_sales_df['Quantity'].shift(1).rolling(window=7).std()
 daily_sales_df['rolling_std_30_days'] = daily_sales_df['Quantity'].shift(1).rolling(window=30).std()
 
+# Adding Holiday Feature
+import holidays
+
+sales_year = daily_sales_df.index.year.unique()[0]
+uk_holidays = holidays.UK(years=sales_year)
+daily_sales_df['is_holiday'] = daily_sales_df.index.map(lambda x: 1 if x in uk_holidays else 0)
+
+daily_sales_df.head(10)
+
+# Total holiday
+
+total_holidays = daily_sales_df['is_holiday'].sum()
+total_holidays
+
 # Fill NaNs from lag/rolling
 daily_sales_df.fillna(0, inplace=True)
 
@@ -63,11 +77,19 @@ X,y = np.array(X), np.array(y)
 
 X.shape , y.shape
 
-# Define a split point (e.g., 80% for training)
-training_size = int(len(X) * 0.8)
+# Data Splinting into three part (Train ,Validation and Test)
+# Total number of sequences
+total_samples = len(X)
 
-X_train, X_test = X[:training_size], X[training_size:]
-y_train, y_test = y[:training_size], y[training_size:]
+# Define split points
+train_size = int(total_samples * 0.70)
+val_size = int(total_samples * 0.15)
+# The rest is the test set
+
+# Split the data
+X_train, y_train = X[:train_size], y[:train_size]
+X_val, y_val = X[train_size:train_size + val_size], y[train_size:train_size + val_size]
+X_test, y_test = X[train_size + val_size:], y[train_size + val_size:]
 
 # converting data into tensor form
 
@@ -78,20 +100,33 @@ import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
 
 
-# Convert to PyTorch Tensors
+# Convert to PyTorch Tensors (add validation tensors) ---
 X_train_tensor = torch.from_numpy(X_train).float()
-y_train_tensor = torch.from_numpy(y_train).float().view(-1, 1) # Reshape y
+y_train_tensor = torch.from_numpy(y_train).float().view(-1, 1)
+
+# Validation tensors
+X_val_tensor = torch.from_numpy(X_val).float()
+y_val_tensor = torch.from_numpy(y_val).float().view(-1, 1)
+
 X_test_tensor = torch.from_numpy(X_test).float()
-y_test_tensor = torch.from_numpy(y_test).float().view(-1, 1) # Reshape y
+y_test_tensor = torch.from_numpy(y_test).float().view(-1, 1)
 
-# Create TensorDatasets
-train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
-test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
 
-# Create DataLoaders
+# Create DataLoaders (add validation loader) ---
 batch_size = 32
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False) # No shuffle for time series
+train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
+
+# Validation loader
+val_dataset = TensorDataset(X_val_tensor, y_val_tensor)
+val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+
+test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+print(f"Training samples: {len(X_train)}")
+print(f"Validation samples: {len(X_val)}")
+print(f"Test samples: {len(X_test)}")
 
 """Difining Model Architecture(Using LSTM )"""
 
@@ -103,7 +138,7 @@ class LSTMModel(nn.Module):
 
         # Define the LSTM layer
         # batch_first=True means the input tensor shape is (batch, sequence, feature)
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=0.2)
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=0.4)
 
         # Define the output layer
         self.fc = nn.Linear(hidden_size, output_size)
@@ -127,7 +162,7 @@ class LSTMModel(nn.Module):
 
 # --- Model Hyperparameters ---
 input_size = num_features # Set input_size to the number of features in the scaled data
-hidden_size = 60 # Number of neurons in the hidden layer
+hidden_size = 128 # Number of neurons in the hidden layer
 num_layers = 3 # Number of stacked LSTM layers
 output_size = 1 # We are predicting a single value
 
@@ -135,26 +170,70 @@ output_size = 1 # We are predicting a single value
 model = LSTMModel(input_size, hidden_size, num_layers, output_size)
 print(model)
 
-# --- Loss Function and Optimizer ---
+# Loss Function and Optimizer
 criterion = nn.MSELoss() # Mean Squared Error is good for regression
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
+# FULL TRAINING LOOP WITH EARLY STOPPING
+
+# --- 1. Initialize variables for Early Stopping ---
+# How many epochs to wait after last time validation loss improved.
+patience = 20
+# A counter for the number of epochs with no improvement
+patience_counter = 0
+# A variable to store the best validation loss found so far
+best_val_loss = float('inf')
+
+# --- Loss Function and Optimizer (no changes here) ---
+criterion = nn.MSELoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+
 # --- Training Loop ---
-num_epochs = 100
+num_epochs = 100 # We might not run all epochs if we stop early
 for epoch in range(num_epochs):
-    model.train() # Set the model to training mode
+    # --- Training Phase ---
+    model.train()
+    total_train_loss = 0
     for batch_X, batch_y in train_loader:
-        # 1. Forward pass
         outputs = model(batch_X)
         loss = criterion(outputs, batch_y)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        total_train_loss += loss.item()
+    avg_train_loss = total_train_loss / len(train_loader)
 
-        # 2. Backward and optimize
-        optimizer.zero_grad() # Clear gradients from previous iteration
-        loss.backward() # Compute gradients
-        optimizer.step() # Update weights
+    # --- Validation Phase ---
+    model.eval()
+    total_val_loss = 0
+    with torch.no_grad():
+        for batch_X, batch_y in val_loader:
+            outputs = model(batch_X)
+            loss = criterion(outputs, batch_y)
+            total_val_loss += loss.item()
+    avg_val_loss = total_val_loss / len(val_loader)
 
-    if (epoch+1) % 10 == 0:
-        print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
+    # --- 2. Check for improvement in validation loss ---
+    if avg_val_loss < best_val_loss:
+        # If the validation loss improved, update the best loss
+        best_val_loss = avg_val_loss
+        # Reset the patience counter
+        patience_counter = 0
+        # --- 3. Save the best model state ---
+        # model.state_dict() contains all the learnable parameters (weights and biases)
+        torch.save(model.state_dict(), 'best_model.pth')
+        print(f"✅ Epoch {epoch+1}: Validation loss improved to {avg_val_loss:.4f}. Saving model.")
+    else:
+        # If the validation loss did not improve, increment the patience counter
+        patience_counter += 1
+        print(f"Epoch {epoch+1}: No improvement in validation loss for {patience_counter} epoch(s).")
+
+    # --- 4. Check if we should stop early ---
+    if patience_counter >= patience:
+        print("!! Early stopping triggered !!")
+        break # Exit the training loop
+
+# If avg_val_loss starts increasing while avg_train_loss decreases, your model is overfitting!
 
 # Set the model to evaluation mode
 model.eval()
@@ -191,11 +270,10 @@ print(f'Test RMSE: {rmse:.2f}')
 
 # Visualize the results
 
-plt.figure(figsize=(15, 6))
-plt.plot(y_test_actual, color='blue', label='Actual Sales')
-plt.plot(predictions, color='red', linestyle='--', label='Forecasted Sales')
-plt.title('PyTorch LSTM Forecast vs. Actuals')
-plt.xlabel('Time')
-plt.ylabel('Quantity Sold')
+plt.figure(figsize=(12, 6))
+plt.plot(daily_sales_df.index[-len(y_test_actual):], y_test_actual, label='Actual', color='blue')
+plt.plot(daily_sales_df.index[-len(y_test_actual):], predictions, label='Predicted', color='red')
+plt.xlabel('Date')
+plt.ylabel('Quantity')
+plt.title('Actual vs. Predicted Quantity')
 plt.legend()
-plt.show()
