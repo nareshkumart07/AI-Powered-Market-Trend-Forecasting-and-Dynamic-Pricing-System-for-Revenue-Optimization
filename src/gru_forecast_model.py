@@ -169,10 +169,6 @@ output_size = 1 # We are predicting a single value
 model = GRUModel(input_size, hidden_size, num_layers, output_size)
 print(model)
 
-# Loss Function and Optimizer
-criterion = nn.MSELoss() # Mean Squared Error is good for regression
-optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-
 # FULL TRAINING LOOP WITH EARLY STOPPING
 
 # ---  Initialize variables for Early Stopping ---
