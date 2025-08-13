@@ -4,6 +4,13 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import random
+
+# Reproducibility
+SEED = 42
+torch.manual_seed(SEED)
+np.random.seed(SEED)
+random.seed(SEED)
 
 df = pd.read_csv("/content/drive/MyDrive/refine_file.csv")
 df.head()
