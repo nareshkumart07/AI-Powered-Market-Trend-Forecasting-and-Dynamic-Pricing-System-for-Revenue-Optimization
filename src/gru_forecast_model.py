@@ -168,8 +168,8 @@ class GRUModel(nn.Module):
 
 # --- Model Hyperparameters (using the same as LSTM for comparison) ---
 input_size = num_features # Set input_size to the number of features in the scaled data
-hidden_size = 128 # Number of neurons in the hidden layer
-num_layers = 4 # Number of stacked GRU layers
+hidden_size = 64 # Number of neurons in the hidden layer
+num_layers = 2 # Number of stacked GRU layers
 output_size = 1 # We are predicting a single value
 
 # --- Instantiate the model ---
