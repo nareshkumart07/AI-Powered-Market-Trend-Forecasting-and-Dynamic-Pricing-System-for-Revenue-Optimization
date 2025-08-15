@@ -1,3 +1,12 @@
+
+"""
+Forecast + Dynamic Pricing (LSTM + Elasticity)
+----------------------------------------------
+- Baseline demand forecast: LSTM (1-day ahead) with engineered features.
+- Price sensitivity: log-linear elasticity estimated from history.
+- Dynamic price: maximize p * demand(p) using the elasticity-adjusted forecast.
+"""
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -30,7 +39,7 @@ random.seed(SEED)
 try:
     # Attempt to load the dataset
     # IMPORTANT: Please replace "/content/drive/MyDrive/refine_file.csv" with the actual path to your CSV file.
-    df = pd.read_csv("E:/ML Project/Collage Project/retail sales/refine_file.csv")
+    df = pd.read_csv("/content/drive/MyDrive/refine_file.csv")
 except FileNotFoundError:
     print("\nERROR: 'refine_file.csv' not found.")
     print("Please make sure the CSV file is in the same directory as this script, or provide the full path.\n")
@@ -70,6 +79,29 @@ daily_sales_df['rolling_std_7_days'] = daily_sales_df['Quantity'].shift(1).rolli
 sales_years = daily_sales_df.index.year.unique()
 uk_holidays = holidays.UK(years=sales_years)
 daily_sales_df['is_holiday'] = daily_sales_df.index.map(lambda x: 1 if x in uk_holidays else 0)
+
+# --- NEW: Load and Merge Competitor Price Data ---
+try:
+    competitor_df = pd.read_csv("competitor_prices.csv")
+    product_competitor_prices = competitor_df[competitor_df['StockCode'] == PRODUCT_ID]
+
+    if not product_competitor_prices.empty:
+        # Add competitor prices as new features.
+        # Since we have one price per competitor for the product, we assign it as a constant column.
+        daily_sales_df['competitor_a_price'] = product_competitor_prices['Competitor_A_Price'].iloc[0]
+        daily_sales_df['competitor_b_price'] = product_competitor_prices['Competitor_B_Price'].iloc[0]
+        daily_sales_df['competitor_c_price'] = product_competitor_prices['Competitor_C_Price'].iloc[0]
+        print("Successfully merged competitor price data as new features.")
+    else:
+        print(f"Warning: Product ID {PRODUCT_ID} not found in competitor_prices.csv. Using fallback values.")
+        daily_sales_df['competitor_a_price'] = 1.90
+        daily_sales_df['competitor_b_price'] = 2.00
+        daily_sales_df['competitor_c_price'] = 2.10
+except FileNotFoundError:
+    print("Warning: 'competitor_prices.csv' not found. Using fallback values for competitor features.")
+    daily_sales_df['competitor_a_price'] = 1.90
+    daily_sales_df['competitor_b_price'] = 2.00
+    daily_sales_df['competitor_c_price'] = 2.10
 
 # Fill any missing values that resulted from lags and rolling windows
 daily_sales_df.fillna(0, inplace=True)
