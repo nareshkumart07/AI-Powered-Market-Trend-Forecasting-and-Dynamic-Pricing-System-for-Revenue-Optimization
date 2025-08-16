@@ -1,229 +1,156 @@
-"""
-    **Cutomer Behavior Analysis Using K-Means Clustring and RFM**
-"""
-
-# Import necessary libraries for data manipulation, analysis, and visualization
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import datetime
-import squarify # A library for creating treemaps
-from sklearn.preprocessing import StandardScaler # For scaling data for K-Means
-from sklearn.cluster import KMeans # For K-Means clustering
-
-# Load the dataset from the specified file path
-df = pd.read_csv('/content/drive/MyDrive/refine_file.csv')
-# Display the first 5 rows of the DataFrame to get an initial look at the data structure and content
-display(df.head())
-
-# Calculate Recency for each customer: the number of days since their last purchase
-# Define the analysis date as the day after the last invoice date in the dataset
-day = df['InvoiceDate'].max() + pd.Timedelta(days=1)
-# Calculate the difference in days between the analysis date and each customer's last purchase date
-recency = df.groupby('Customer ID')['InvoiceDate'].max().apply(lambda x: (day - x).days)
-# Display the Recency for the first 10 customers
-recency.head(10)
-
-# Calculate Frequency for each customer: the total number of purchases made by each customer
-frequency = df.groupby('Customer ID')['InvoiceDate'].count()
-# Display the Frequency for the first 10 customers
-frequency.head(10)
-
-# Calculate Monetary value for each customer: the total revenue generated from each customer's purchases
-monetary = df.groupby('Customer ID')['Revenue'].sum()
-
-# Display the Monetary value for the first 10 customers
-display(monetary.head())
-
-# Create a new DataFrame 'rfm' to store the calculated Recency, Frequency, and Monetary values for each customer
-rfm = pd.DataFrame({'Recency':recency,'Frequency':frequency,'Monetary':monetary})
-
-# Display the first 10 rows of the RFM DataFrame to verify the data
-display(rfm.head(10))
-
-# Scoring customers based on RFM values by dividing them into 5 quantiles (quintiles)
-# Assign R_Score: 5 for most recent, 1 for least recent (higher Recency means lower score)
-rfm['R_Score'] = pd.qcut(rfm['Recency'], 5, labels=[5,4, 3, 2, 1])
-
-# Assign F_Score: 1 for least frequent, 5 for most frequent (higher Frequency means higher score)
-rfm['F_Score'] = pd.qcut(rfm['Frequency'].rank(method='first'), 5, labels=[1, 2, 3, 4,5])
-
-# Assign M_Score: 1 for lowest monetary value, 5 for highest monetary value (higher Monetary means higher score)
-rfm['M_Score'] = pd.qcut(rfm['Monetary'], 5, labels=[1, 2, 3, 4,5])
-
-# Combine the individual RFM scores into a single string to represent the RFM segment score
-rfm['RFM_Score'] = rfm['R_Score'].astype(str) + rfm['F_Score'].astype(str) + rfm['M_Score'].astype(str)
-
-# Display the first few rows of the RFM DataFrame with the new scores and segment score
-display(rfm.head())
-
-# Define a dictionary to map RFM scores to customer segments
-# The keys represent ranges of R and F scores using regex, and the values are the segment names.
-# This mapping is based on common RFM segmentation strategies.
-segment_map = {
-    r'[1-2][1-2]': 'Hibernating',      # Low Recency, Low Frequency
-    r'[1-2][3-4]': 'At Risk',          # Low Recency, Medium-High Frequency
-    r'[1-2]5': 'Can\'t Lose Them',     # Low Recency, High Frequency
-    r'3[1-2]': 'About to Sleep',       # Medium Recency, Low Frequency
-    r'33': 'Need Attention',           # Medium Recency, Medium Frequency
-    r'[3-4][4-5]': 'Loyal Customers',  # Medium-High Recency, High Frequency
-    r'41': 'Promising',                # High Recency, Low Frequency
-    r'51': 'New Customers',            # Very High Recency, Low Frequency
-    r'[4-5][2-3]': 'Potential Loyalists', # High-Very High Recency, Medium Frequency
-    r'5[4-5]': 'Champions'             # Very High Recency, High Frequency
-}
-
-# Create a temporary column by concatenating the R_Score and F_Score as strings
-rfm['Segment_RF'] = rfm['R_Score'].astype(str) + rfm['F_Score'].astype(str)
-
-# Use the defined segment_map with regex to assign a segment name to each customer
-# The replace method with regex=True applies the pattern matching from the segment_map keys.
-rfm['Segment'] = rfm['Segment_RF'].replace(segment_map, regex=True)
-
-# Drop the temporary 'Segment_RF' column as it is no longer needed
-rfm = rfm.drop(columns=['Segment_RF'])
-
-# Display the count of customers in each segment to understand the distribution
-print("Customer Segment Distribution:")
-print(rfm['Segment'].value_counts())
-
-# Define business actions for each customer segment based on their characteristics
-business_actions = {
-    "Hibernating": "Re-engage with reminder emails, seasonal promotions, or limited-time discounts.",
-    "Loyal Customers": "Strengthen relationship with exclusive offers, loyalty rewards, and early access to new products.",
-    "Champions": "Reward with VIP programs, personalized gifts, and brand ambassador opportunities.",
-    "At Risk": "Launch win-back campaigns, offer special discounts, and request feedback to understand disengagement.",
-    "Potential Loyalists": "Nurture with targeted recommendations, onboarding offers, and membership incentives.",
-    "About to Sleep": "Send wake-up campaigns, birthday/anniversary offers, or personalized coupons.",
-    "Need Attention": "Use personalized outreach, highlight trending products, and send surveys to keep them active.",
-    "Can't Lose Them": "Offer strong retention incentives, special appreciation messages, and reactivation bundles.",
-    "Promising": "Encourage repeat purchases with targeted recommendations, cross-selling, and small perks.",
-    "New Customers": "Deliver a strong onboarding experience, welcome discounts, and introduce best-sellers."
-}
-
-# Add the 'Action' column to the RFM DataFrame by mapping the 'Segment' to the defined business actions
-rfm["Action"] = rfm["Segment"].map(business_actions)
-
-# Save the updated segmentation results, including the assigned actions, to a CSV file
-rfm.to_csv("customer_segments_with_actions.csv", index=False)
-
-print("✅ Segmentation completed. File saved: customer_segments_with_actions.csv")
-
-# Display the first few rows of the RFM DataFrame to show the added 'Action' column
-display(rfm.head())
-
-# Create a bar chart to visualize the distribution of customers across different RFM segments
-plt.figure(figsize=(12, 6)) # Set the size of the plot
-# Use seaborn's countplot to show the number of customers in each segment
-# Order the bars by the count of each segment in descending order
-sns.countplot(data=rfm, x='Segment', order=rfm['Segment'].value_counts().index, palette='viridis')
-plt.title('Customer Segment Distribution') # Set the title of the plot
-plt.xlabel('Segment') # Set the label for the x-axis
-plt.ylabel('Number of Customers') # Set the label for the y-axis
-plt.xticks(rotation=45, ha='right') # Rotate the x-axis labels for better readability
-plt.tight_layout() # Adjust layout to prevent labels overlapping
-plt.show() # Display the plot
-
-# Create a scatter plot to visualize the relationship between Recency and Frequency, colored by Segment
-plt.figure(figsize=(12, 8)) # Set the size of the plot
-# Use seaborn's scatterplot to show Recency vs. Frequency
-# Hue is set to 'Segment' to color points based on their customer segment
-# s controls the size of the points, alpha controls the transparency
-sns.scatterplot(data=rfm.head(200), x='Recency', y='Frequency', hue='Segment', palette='viridis', s=80, alpha=0.7)
-plt.title('Recency vs. Frequency by Segment') # Set the title of the plot
-plt.xlabel('Recency (Days since last purchase)') # Set the label for the x-axis
-plt.ylabel('Frequency (Total purchases)') # Set the label for the y-axis
-plt.legend(title='Customer Segments') # Add a legend to identify segments by color
-plt.grid(True) # Add a grid to the plot for better readability
-plt.show() # Display the plot
-
-# Create a treemap to visualize the proportion of customers in each segment
-segment_counts = rfm['Segment'].value_counts() # Get the count of customers in each segment
-plt.figure(figsize=(14, 9)) # Set the size of the plot
-# Use the squarify library to create the treemap
-# sizes are the counts of each segment
-# label includes the segment name and the count
-# color is set using a viridis palette
-squarify.plot(sizes=segment_counts.values,
-              label=[f'{label}\n({count})' for label, count in segment_counts.items()],
-              color=sns.color_palette("viridis", len(segment_counts)),
-              alpha=0.8)
-plt.title('Treemap of Customer Segments') # Set the title of the plot
-plt.axis('off') # Turn off the axis
-plt.show() # Display the plot
-
-# K-Means Clustring
-
-from sklearn.cluster import KMeans
+import squarify
+from typing import Optional
 from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
 
-# Select the RFM features (Recency, Frequency, Monetary) for clustering
-rfm_features = rfm[["Recency", "Frequency", "Monetary"]]
+def perform_rfm_analysis(
+    df: pd.DataFrame,
+    customer_id_col: str = 'Customer ID',
+    invoice_date_col: str = 'InvoiceDate',
+    revenue_col: str = 'Revenue',
+    date_format: str = '%d-%m-%Y %H:%M',
+    output_csv_path: Optional[str] = "customer_segments_with_actions.csv",
+    generate_plots: bool = True,
+    perform_kmeans: bool = True, # Defaulting to True to focus on K-Means
+    n_clusters: int = 4
+) -> pd.DataFrame:
+    """
+    Performs RFM analysis and K-Means clustering to segment customers.
 
-# Initialize the StandardScaler to standardize the RFM features
-# Standardization is important for K-Means as it is sensitive to the scale of features
-scaler = StandardScaler()
+    This function calculates RFM metrics and then uses K-Means clustering
+    to group customers into data-driven segments. It analyzes each cluster
+    to provide clear business insights.
 
-# Fit the scaler to the RFM features and transform the data
-rfm_scaled = scaler.fit_transform(rfm_features)
+    Args:
+        df (pd.DataFrame): The input DataFrame with transaction data.
+        customer_id_col (str): Column name for customer ID.
+        invoice_date_col (str): Column name for invoice date.
+        revenue_col (str): Column name for transaction revenue.
+        date_format (str): The format of the date string.
+        output_csv_path (Optional[str]): Path to save the results CSV. If None, not saved.
+        generate_plots (bool): If True, generates and displays summary plots.
+        perform_kmeans (bool): If True, performs K-Means clustering on RFM metrics.
+        n_clusters (int): The number of clusters to form for K-Means.
 
-# Find the optimal number of clusters (K) using the Elbow Method
-# WCSS (Within-Cluster Sum of Squares) is the sum of squared distances of samples to their closest cluster center.
-wcss = [] # Initialize an empty list to store WCSS values
-# Iterate through a range of possible cluster numbers (from 1 to 10)
-for k in range(1, 11):
-    # Initialize KMeans with the current number of clusters and a random state for reproducibility
-    km = KMeans(n_clusters=k, random_state=42, n_init=10) # Added n_init explicitly
-    # Fit the KMeans model to the scaled RFM data
-    km.fit(rfm_scaled)
-    # Append the WCSS value for the current number of clusters to the list
-    wcss.append(km.inertia_)
+    Returns:
+        pd.DataFrame: A DataFrame with RFM values and K-Means cluster labels.
+    """
+    # --- 1. Data Preparation ---
+    print("Starting RFM analysis...")
+    local_df = df.copy()
+    required_cols = [customer_id_col, invoice_date_col, revenue_col]
+    assert all(col in local_df.columns for col in required_cols), \
+        f"Error: DataFrame must contain the columns: {required_cols}"
+    local_df[invoice_date_col] = pd.to_datetime(local_df[invoice_date_col], format=date_format)
+    print("Converted date column to datetime objects.")
 
-# Plot the WCSS values against the number of clusters to visualize the Elbow Method
-plt.plot(range(1, 11), wcss, marker="o") # Plot WCSS values with markers
-plt.title("Elbow Method for Optimal K") # Set the title of the plot
-plt.xlabel("Number of Clusters") # Set the label for the x-axis
-plt.ylabel("WCSS") # Set the label for the y-axis (Within-Cluster Sum of Squares)
-plt.show() # Display the plot
+    # --- 2. Calculate RFM Metrics ---
+    analysis_date = local_df[invoice_date_col].max() + pd.Timedelta(days=1)
+    recency = local_df.groupby(customer_id_col)[invoice_date_col].max().apply(lambda x: (analysis_date - x).days)
+    frequency = local_df.groupby(customer_id_col)[invoice_date_col].count()
+    monetary = local_df.groupby(customer_id_col)[revenue_col].sum()
+    rfm = pd.DataFrame({'Recency': recency, 'Frequency': frequency, 'Monetary': monetary})
+    print("Calculated Recency, Frequency, and Monetary metrics.")
 
-# The "elbow" in the plot indicates the optimal number of clusters.
+    # --- 3. K-Means Clustering ---
+    if perform_kmeans:
+        print("\nPerforming K-Means clustering...")
+        rfm_features = rfm[["Recency", "Frequency", "Monetary"]]
+        scaler = StandardScaler()
+        rfm_scaled = scaler.fit_transform(rfm_features)
 
-# Based on the Elbow Method plot, choose the optimal number of clusters (e.g., 4 in this case)
-optimal_k = 4 # Assign the chosen number of clusters to a variable
+        # Elbow Method to find the optimal number of clusters (K)
+        if generate_plots:
+            wcss = []
+            for k in range(1, 11):
+                km = KMeans(n_clusters=k, random_state=42, n_init=10)
+                km.fit(rfm_scaled)
+                wcss.append(km.inertia_)
+            plt.figure(figsize=(8, 5))
+            plt.plot(range(1, 11), wcss, marker="o")
+            plt.title("Elbow Method for Optimal K")
+            plt.xlabel("Number of Clusters")
+            plt.ylabel("WCSS")
+            plt.show()
 
-# Initialize KMeans with the optimal number of clusters and a random state for reproducibility
-kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=10) # Added n_init explicitly
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        rfm["KMeans_Cluster"] = kmeans.fit_predict(rfm_scaled)
+        print(f"Assigned customers to {n_clusters} K-Means clusters.")
 
-# Fit the KMeans model to the scaled RFM data and predict the cluster for each customer
-rfm["KMeans_Cluster"] = kmeans.fit_predict(rfm_scaled)
+        # --- 4. Analyze and Interpret K-Means Clusters ---
+        print("\n--- K-Means Cluster Analysis & Business Insights ---")
+        # Calculate the average RFM values for each cluster
+        cluster_analysis = rfm.groupby('KMeans_Cluster').agg({
+            'Recency': 'mean',
+            'Frequency': 'mean',
+            'Monetary': 'mean'
+        }).round(2)
 
-# Save the RFM DataFrame, now including the K-Means cluster assignments, to a CSV file
-rfm.to_csv("rfm_kmeans_clusters.csv", index=False)
+        # Sort clusters to assign meaningful labels (e.g., Best Customers, At-Risk)
+        # This logic assumes 'Best' customers have low recency, high frequency/monetary
+        cluster_analysis = cluster_analysis.sort_values(by=['Recency', 'Monetary'], ascending=[True, False])
+        
+        # Assign descriptive labels based on sorted order
+        cluster_personas = {
+            cluster_analysis.index[0]: 'Best Customers (Champions)',
+            cluster_analysis.index[1]: 'Potential Loyalists',
+            cluster_analysis.index[2]: 'At-Risk Customers',
+            cluster_analysis.index[3]: 'Hibernating / Low-Value'
+        }
+        
+        # Add the persona to the analysis table
+        cluster_analysis['Persona'] = cluster_analysis.index.map(cluster_personas)
+        
+        print(cluster_analysis)
 
-# Create a scatter plot to visualize the K-Means clusters based on Recency and Monetary values
-plt.figure(figsize=(8,5)) # Set the size of the plot
-# Use seaborn's scatterplot to show Recency vs. Monetary
-# Hue is set to 'KMeans_Cluster' to color points based on their assigned cluster
-# palette is set to "tab10" for distinct cluster colors
-sns.scatterplot(data=rfm, x="Recency", y="Monetary", hue="KMeans_Cluster", palette="tab10")
-plt.title("K-Means Clusters on RFM (Recency vs. Monetary)") # Set the title of the plot
-plt.xlabel("Recency") # Set the label for the x-axis
-plt.ylabel("Monetary") # Set the label for the y-axis
-plt.show() # Display the plot
+        # Map the persona back to the main RFM dataframe for context
+        rfm['Cluster_Persona'] = rfm['KMeans_Cluster'].map(cluster_personas)
+        
+        print("\nBusiness Actions Suggested by Clusters:")
+        print("- Best Customers: Nurture with loyalty programs, exclusive offers, and early access.")
+        print("- Potential Loyalists: Engage with personalized recommendations and incentives to increase frequency.")
+        print("- At-Risk Customers: Launch win-back campaigns with special discounts to re-engage them.")
+        print("- Hibernating / Low-Value: Include in general marketing; avoid high-cost campaigns.")
 
-"""**Customer Behavior Analysis using RFM and K-Means Clustering**
 
-This notebook performs a customer behavior analysis using two methods: RFM (Recency, Frequency, Monetary) and K-Means Clustering. The goal is to segment customers based on their purchasing behavior and identify actionable insights for each segment.
+    # --- 5. Save and Visualize ---
+    if output_csv_path:
+        rfm.to_csv(output_csv_path, index=True)
+        print(f"\n✅ Analysis complete. Results saved to: {output_csv_path}")
 
-**Steps:**
+    if generate_plots and perform_kmeans:
+        print("\nGenerating K-Means visualizations...")
+        # Scatter plot for K-Means clusters if performed
+        plt.figure(figsize=(12, 8))
+        sns.scatterplot(data=rfm, x="Recency", y="Monetary", hue="Cluster_Persona", palette="tab10", s=80, alpha=0.8)
+        plt.title("K-Means Customer Segments (Recency vs. Monetary)")
+        plt.xlabel("Recency (Days since last purchase)")
+        plt.ylabel("Monetary (Total spending)")
+        plt.legend(title="Customer Persona")
+        plt.grid(True)
+        plt.show()
 
-1.  **Data Loading and Cleaning:** Load the dataset and perform initial data cleaning, including handling missing values and removing invalid entries.
-2.  **RFM Calculation:** Calculate Recency, Frequency, and Monetary values for each customer.
-3.  **RFM Scoring:** Assign RFM scores to each customer based on quantiles.
-4.  **Segment Mapping:** Categorize customers into predefined segments based on their RFM scores.
-5.  **Business Actions:** Define and assign targeted business actions for each customer segment.
-6.  **Visualization: RFM Segments:** Visualize the distribution of customers across RFM segments.
-7.  **K-Means Clustering on RFM:** Apply K-Means clustering to the RFM data to identify natural groupings of customers.
-8.  **Visualization: K-Means Clusters:** Visualize the customer clusters based on RFM metrics.
-"""
+    return rfm
+
+# --- HOW TO USE THE FUNCTION IN A PIPELINE ---
+if __name__ == '__main__':
+    # 1. Load your data from a CSV file
+    file_path = '/content/drive/MyDrive/refine_file.csv'
+    input_df = pd.read_csv(file_path)
+
+    # 2. Call the main function to run the analysis
+    rfm_results_df = perform_rfm_analysis(
+        df=input_df,
+        output_csv_path="customer_segmentation_kmeans_results.csv",
+        generate_plots=True,
+        perform_kmeans=True,
+        n_clusters=4
+    )
+
+    # 3. Display the head of the resulting DataFrame
+    print("\n--- K-Means Analysis Output (First 5 Rows) ---")
+    print(rfm_results_df.head())
