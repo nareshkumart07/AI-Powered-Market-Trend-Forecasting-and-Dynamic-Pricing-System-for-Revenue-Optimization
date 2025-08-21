@@ -1,11 +1,11 @@
-
 """
 This script performs a comprehensive Exploratory Data Analysis (EDA) on the
 Online Retail II dataset. It is structured into modular functions for loading,
-preprocessing, and analyzing the data to derive actionable business insights.
+preprocessing, visualizing, and analyzing the data to derive actionable
+business insights.
 """
 
-# Import necessary libraries
+# --- 0. LIBRARY IMPORTS ---
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -15,214 +15,103 @@ import plotly.express as px
 # --- 1. DATA LOADING ---
 
 def load_data(filepath):
-    """
-    Loads the dataset from an Excel file.
-
-    Args:
-        filepath (str): The path to the .xlsx file.
-
-    Returns:
-        pd.DataFrame: The loaded data as a pandas DataFrame.
-    """
+    """Loads the dataset from an Excel file."""
     print("Loading data...")
-    # Load the dataset, specifying the engine for .xlsx files
-    df = pd.read_excel(filepath, engine='openpyxl')
-    print("Data loaded successfully.")
-    return df
+    try:
+        df = pd.read_excel(filepath, engine='openpyxl')
+        print("Data loaded successfully.")
+        return df
+    except FileNotFoundError:
+        print(f"Error: The file at {filepath} was not found.")
+        return None
 
-# --- 2. DATA PREPROCESSING AND FEATURE ENGINEERING ---
+# --- 2. DATA CLEANING & PREPROCESSING ---
 
-def preprocess_data(df):
-    """
-    Cleans the data and engineers new features for analysis.
+def handle_negative_values(df):
+    """Removes rows with negative Quantity or Price."""
+    return df[(df['Quantity'] > 0) & (df['Price'] > 0)].copy()
 
-    This function handles:
-    - Negative values for Quantity and Price (likely returns).
-    - Visualizing the effect of outlier removal.
-    - Outliers using the IQR method.
-    - Missing values for Customer ID and Description.
-    - Feature engineering for Revenue and time-based attributes.
-
-    Args:
-        df (pd.DataFrame): The raw DataFrame.
-
-    Returns:
-        pd.DataFrame: The cleaned and enriched DataFrame.
-    """
-    print("Starting data preprocessing...")
-
-    # --- Handle Negative Values ---
-    df = df[(df['Quantity'] > 0) & (df['Price'] > 0)].copy()
-
-    # --- Visualize Outlier Effect (Before) ---
-    print("Visualizing data distribution before outlier removal...")
-    plt.figure(figsize=(15, 5))
-    plt.subplot(1, 2, 1)
-    sns.boxplot(x=df['Quantity'])
-    plt.title('Before Outlier Removal: Quantity', fontsize=14)
-    plt.subplot(1, 2, 2)
-    sns.boxplot(x=df['Price'])
-    plt.title('Before Outlier Removal: Price', fontsize=14)
-    plt.tight_layout()
-    plt.show()
-
-    # --- Handle Outliers using IQR Method ---
-    for col in ['Quantity', 'Price']:
-        Q1 = df[col].quantile(0.25)
-        Q3 = df[col].quantile(0.75)
+def remove_outliers_iqr(df, columns):
+    """Removes outliers from specified columns using the IQR method."""
+    df_clean = df.copy()
+    for col in columns:
+        Q1 = df_clean[col].quantile(0.25)
+        Q3 = df_clean[col].quantile(0.75)
         IQR = Q3 - Q1
         lower_bound = Q1 - 1.5 * IQR
         upper_bound = Q3 + 1.5 * IQR
-        df = df[(df[col] >= lower_bound) & (df[col] <= upper_bound)]
+        df_clean = df_clean[(df_clean[col] >= lower_bound) & (df_clean[col] <= upper_bound)]
+    return df_clean
 
-    # --- Visualize Outlier Effect (After) ---
+def impute_missing_values(df):
+    """Handles missing values for 'Customer ID' and 'Description'."""
+    df_imputed = df.copy()
+    df_imputed['Customer ID'].fillna('Unknown', inplace=True)
+    stockcode_map = df_imputed.dropna(subset=['Description']).set_index('StockCode')['Description'].to_dict()
+    df_imputed['Description'] = df_imputed['Description'].fillna(df_imputed['StockCode'].map(stockcode_map))
+    df_imputed['Description'].fillna('Unknown', inplace=True)
+    return df_imputed
+
+def engineer_features(df):
+    """Creates new features like Revenue and time-based attributes."""
+    df_featured = df.copy()
+    df_featured['Revenue'] = df_featured['Quantity'] * df_featured['Price']
+    df_featured['InvoiceDate'] = pd.to_datetime(df_featured['InvoiceDate'])
+    df_featured['InvoiceMonth'] = df_featured['InvoiceDate'].dt.month
+    df_featured['InvoiceWeekday'] = df_featured['InvoiceDate'].dt.day_name()
+    df_featured['InvoiceHour'] = df_featured['InvoiceDate'].dt.hour
+    return df_featured
+
+def preprocess_pipeline(df):
+    """Orchestrates the entire data preprocessing workflow."""
+    print("Starting data preprocessing pipeline...")
+    df = handle_negative_values(df)
+    print("Visualizing data distribution before outlier removal...")
+    visualize_outlier_effect(df, ['Quantity', 'Price'], 'Before')
+    df = remove_outliers_iqr(df, ['Quantity', 'Price'])
     print("Visualizing data distribution after outlier removal...")
-    plt.figure(figsize=(15, 5))
-    plt.subplot(1, 2, 1)
-    sns.boxplot(x=df['Quantity'])
-    plt.title('After Outlier Removal: Quantity', fontsize=14)
-    plt.subplot(1, 2, 2)
-    sns.boxplot(x=df['Price'])
-    plt.title('After Outlier Removal: Price', fontsize=14)
-    plt.tight_layout()
-    plt.show()
-
-    # --- Handle Missing Values ---
-    df['Customer ID'].fillna('Unknown', inplace=True)
-    stockcode_map = df.dropna(subset=['Description']).set_index('StockCode')['Description'].to_dict()
-    df['Description'] = df['Description'].fillna(df['StockCode'].map(stockcode_map))
-    df['Description'].fillna('Unknown', inplace=True)
-
-    # --- Feature Engineering ---
-    df['Revenue'] = df['Quantity'] * df['Price']
-    df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'])
-    df['InvoiceMonth'] = df['InvoiceDate'].dt.month
-    df['InvoiceWeekday'] = df['InvoiceDate'].dt.day_name()
-    df['InvoiceHour'] = df['InvoiceDate'].dt.hour
-
+    visualize_outlier_effect(df, ['Quantity', 'Price'], 'After')
+    df = impute_missing_values(df)
+    df = engineer_features(df)
     print("Preprocessing complete.")
     return df
 
-# --- 3. EXPLORATORY DATA ANALYSIS (EDA) ---
+# --- 3. VISUALIZATION FUNCTIONS ---
 
-def analyze_top_performers(df, top_n=10):
-    """
-    Analyzes and visualizes top-performing products, countries, and time periods.
-
-    Args:
-        df (pd.DataFrame): The preprocessed DataFrame.
-        top_n (int): The number of top items to analyze.
-
-    Returns:
-        dict: A dictionary containing key business insights.
-    """
-    print("\nAnalyzing top performers...")
-    insights = {}
-
-    # Top Products by Revenue
-    top_revenue_products = df.groupby('Description')['Revenue'].sum().nlargest(top_n)
-    insights['top_revenue_product'] = top_revenue_products.index[0]
-
-    # Top Countries by Revenue
-    top_revenue_countries = df.groupby('Country')['Revenue'].sum().nlargest(top_n)
-    insights['top_revenue_country'] = top_revenue_countries.index[0]
-
-    # Top Month by Revenue
-    top_revenue_month = df.groupby('InvoiceMonth')['Revenue'].sum().idxmax()
-    month_names = {1: 'January', 2: 'February', 3: 'March', 4: 'April', 5: 'May', 6: 'June',
-                   7: 'July', 8: 'August', 9: 'September', 10: 'October', 11: 'November', 12: 'December'}
-    insights['top_revenue_month'] = month_names[top_revenue_month]
-
-    # Top Weekday by Revenue
-    top_revenue_day = df.groupby('InvoiceWeekday')['Revenue'].sum().idxmax()
-    insights['top_revenue_day'] = top_revenue_day
-
-    # Top Hour by Revenue
-    top_revenue_hour = df.groupby('InvoiceHour')['Revenue'].sum().idxmax()
-    insights['top_revenue_hour'] = f"{top_revenue_hour}:00 - {top_revenue_hour+1}:00"
-
-    # Visualization: Top 10 Products by Revenue
-    plt.figure(figsize=(12, 7))
-    sns.barplot(y=top_revenue_products.index, x=top_revenue_products.values, palette='viridis', orient='h')
-    plt.title(f'Top {top_n} Products by Revenue', fontsize=16)
-    plt.xlabel('Total Revenue', fontsize=12)
-    plt.ylabel('Product Description', fontsize=12)
+def visualize_outlier_effect(df, columns, stage):
+    """Visualizes the distribution of specified columns using boxplots."""
+    plt.figure(figsize=(15, 5))
+    for i, col in enumerate(columns, 1):
+        plt.subplot(1, len(columns), i)
+        sns.boxplot(x=df[col])
+        plt.title(f'{stage} Outlier Removal: {col}', fontsize=14)
     plt.tight_layout()
     plt.show()
 
-    return insights
+def plot_top_n(data, title, xlabel, ylabel):
+    """Generic function to plot top N bar charts."""
+    plt.figure(figsize=(12, 7))
+    sns.barplot(y=data.index, x=data.values, palette='viridis', orient='h')
+    plt.title(title, fontsize=16)
+    plt.xlabel(xlabel, fontsize=12)
+    plt.ylabel(ylabel, fontsize=12)
+    plt.tight_layout()
+    plt.show()
 
-def analyze_temporal_trends(df):
-    """
-    Analyzes and visualizes monthly and hourly revenue trends.
-
-    Args:
-        df (pd.DataFrame): The preprocessed DataFrame.
-    """
-    print("\nAnalyzing temporal trends...")
-
-    # Monthly Revenue Trend
-    monthly_revenue = df.groupby('InvoiceMonth')['Revenue'].sum()
+def plot_temporal_trend(data, title, xlabel, ylabel, color, xticks_range):
+    """Generic function to plot line charts for temporal trends."""
     plt.figure(figsize=(12, 6))
-    monthly_revenue.plot(kind='line', marker='o', color='b')
-    plt.title('Monthly Revenue Trend', fontsize=16)
-    plt.xlabel('Month', fontsize=12)
-    plt.ylabel('Total Revenue', fontsize=12)
-    plt.xticks(ticks=range(1, 13))
+    data.plot(kind='line', marker='o', color=color)
+    plt.title(title, fontsize=16)
+    plt.xlabel(xlabel, fontsize=12)
+    plt.ylabel(ylabel, fontsize=12)
+    if xticks_range:
+        plt.xticks(ticks=range(xticks_range[0], xticks_range[1]))
     plt.grid(True, which='both', linestyle='--', linewidth=0.5)
     plt.show()
 
-    # Hourly Revenue Trend
-    hourly_revenue = df.groupby('InvoiceHour')['Revenue'].sum()
-    plt.figure(figsize=(12, 6))
-    hourly_revenue.plot(kind='line', marker='o', color='r')
-    plt.title('Hourly Revenue Trend', fontsize=16)
-    plt.xlabel('Hour of the Day', fontsize=12)
-    plt.ylabel('Total Revenue', fontsize=12)
-    plt.xticks(ticks=range(0, 24))
-    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
-    plt.show()
-
-def analyze_additional_insights(df):
-    """
-    Generates additional business-critical visuals and insights.
-
-    Args:
-        df (pd.DataFrame): The preprocessed DataFrame.
-
-    Returns:
-        dict: A dictionary containing additional insights.
-    """
-    print("\nAnalyzing additional business insights...")
-    insights = {}
-
-    # --- New vs. Returning Customer Analysis ---
-    # A returning customer is defined as one who has made more than one purchase.
-    customer_invoice_count = df[df['Customer ID'] != 'Unknown'].groupby('Customer ID')['Invoice'].nunique()
-    returning_customer_ids = customer_invoice_count[customer_invoice_count > 1].index
-    new_customer_ids = customer_invoice_count[customer_invoice_count == 1].index
-
-    returning_customer_revenue = df[df['Customer ID'].isin(returning_customer_ids)]['Revenue'].sum()
-    new_customer_revenue = df[df['Customer ID'].isin(new_customer_ids)]['Revenue'].sum()
-
-    insights['returning_customer_revenue'] = round(returning_customer_revenue, 2)
-    insights['new_customer_revenue'] = round(new_customer_revenue, 2)
-    insights['returning_customer_revenue_share'] = (returning_customer_revenue / (returning_customer_revenue + new_customer_revenue)) * 100
-
-    # Visualization for New vs. Returning Customers
-    revenue_data = pd.DataFrame({
-        'Customer Type': ['Returning', 'New'],
-        'Revenue': [returning_customer_revenue, new_customer_revenue]
-    })
-    plt.figure(figsize=(8, 6))
-    sns.barplot(data=revenue_data, x='Customer Type', y='Revenue', palette='pastel')
-    plt.title('Revenue from New vs. Returning Customers', fontsize=16)
-    plt.ylabel('Total Revenue', fontsize=12)
-    plt.xlabel('Customer Type', fontsize=12)
-    plt.show()
-
-
-    # --- Geographic Revenue Heatmap ---
+def plot_geographic_heatmap(df):
+    """Plots a choropleth map of revenue by country."""
     country_revenue = df.groupby('Country')['Revenue'].sum().reset_index()
     fig = px.choropleth(country_revenue,
                         locations="Country",
@@ -233,49 +122,161 @@ def analyze_additional_insights(df):
                         title='Geographic Distribution of Revenue')
     fig.show()
 
-    return insights
+# --- 4. ANALYSIS FUNCTIONS ---
 
-# --- 4. MAIN EXECUTION ---
+# ## Original Analysis Functions ##
+def analyze_top_performers_by_revenue(df, top_n=10):
+    """Analyzes top-performing products and countries by revenue."""
+    print("\nAnalyzing top performers by REVENUE...")
+    top_revenue_products = df.groupby('Description')['Revenue'].sum().nlargest(top_n)
+    top_revenue_countries = df.groupby('Country')['Revenue'].sum().nlargest(top_n)
+    plot_top_n(top_revenue_products, f'Top {top_n} Products by Revenue', 'Total Revenue', 'Product Description')
+    return {'top_products': top_revenue_products, 'top_countries': top_revenue_countries}
 
-def main():
-    """
-    Main function to run the entire analysis pipeline.
-    """
-    # Define the file path for your dataset
-    filepath = '/content/drive/MyDrive/online_retail_II.xlsx'
+def analyze_temporal_trends(df):
+    """Analyzes monthly, weekly, and hourly revenue trends."""
+    print("\nAnalyzing temporal trends...")
+    monthly_revenue = df.groupby('InvoiceMonth')['Revenue'].sum()
+    weekday_revenue = df.groupby('InvoiceWeekday')['Revenue'].sum()
+    hourly_revenue = df.groupby('InvoiceHour')['Revenue'].sum()
+    plot_temporal_trend(monthly_revenue, 'Monthly Revenue Trend', 'Month', 'Total Revenue', 'b', (1, 13))
+    plot_temporal_trend(hourly_revenue, 'Hourly Revenue Trend', 'Hour of the Day', 'Total Revenue', 'r', (0, 24))
+    return {'monthly': monthly_revenue, 'weekday': weekday_revenue, 'hourly': hourly_revenue}
 
-    # Run the pipeline
-    raw_df = load_data(filepath)
-    clean_df = preprocess_data(raw_df)
+def analyze_customer_behavior(df):
+    """Analyzes new vs. returning customer revenue."""
+    print("\nAnalyzing customer behavior (New vs. Returning)...")
+    known_customers_df = df[df['Customer ID'] != 'Unknown']
+    customer_invoice_count = known_customers_df.groupby('Customer ID')['Invoice'].nunique()
+    returning_customer_ids = customer_invoice_count[customer_invoice_count > 1].index
+    returning_revenue = known_customers_df[known_customers_df['Customer ID'].isin(returning_customer_ids)]['Revenue'].sum()
+    new_revenue = known_customers_df[~known_customers_df['Customer ID'].isin(returning_customer_ids)]['Revenue'].sum()
+    revenue_data = pd.DataFrame({'Customer Type': ['Returning', 'New'], 'Revenue': [returning_revenue, new_revenue]})
+    plt.figure(figsize=(8, 6))
+    sns.barplot(data=revenue_data, x='Customer Type', y='Revenue', palette='pastel')
+    plt.title('Revenue from New vs. Returning Customers', fontsize=16)
+    plt.ylabel('Total Revenue'); plt.xlabel('Customer Type')
+    plt.show()
+    return {'returning_revenue': returning_revenue, 'new_revenue': new_revenue}
 
-    # Perform EDA and gather insights
-    top_performer_insights = analyze_top_performers(clean_df)
-    analyze_temporal_trends(clean_df)
-    additional_insights = analyze_additional_insights(clean_df)
+# ## --- NEW VISUALS FOR DEEPER BUSINESS INSIGHTS --- ##
 
-    # --- Print Summary of Business Insights ---
+def analyze_top_performers_by_quantity(df, top_n=10):
+    """Analyzes top-selling products by quantity sold."""
+    print("\nAnalyzing top performers by QUANTITY SOLD...")
+    top_quantity_products = df.groupby('Description')['Quantity'].sum().nlargest(top_n)
+    plot_top_n(top_quantity_products, f'Top {top_n} Products by Quantity Sold', 'Total Quantity Sold', 'Product Description')
+    return {'top_quantity_products': top_quantity_products}
+
+def analyze_price_distribution(df):
+    """Visualizes the distribution of unit prices."""
+    print("\nAnalyzing product price distribution...")
+    plt.figure(figsize=(10, 6))
+    sns.histplot(df['Price'], bins=50, kde=True, color='purple')
+    plt.title('Distribution of Unit Prices', fontsize=16)
+    plt.xlabel('Price', fontsize=12)
+    plt.ylabel('Frequency', fontsize=12)
+    plt.show()
+
+def analyze_basket_size(df):
+    """Analyzes the number of items per invoice (basket size)."""
+    print("\nAnalyzing transaction basket size...")
+    basket_sizes = df.groupby('Invoice')['StockCode'].count()
+    plt.figure(figsize=(10, 6))
+    sns.histplot(basket_sizes, bins=40, color='orange', kde=True)
+    plt.title('Distribution of Basket Sizes (Items per Transaction)', fontsize=16)
+    plt.xlabel('Number of Items in Basket', fontsize=12)
+    plt.ylabel('Number of Transactions', fontsize=12)
+    plt.xlim(0, basket_sizes.quantile(0.99)) # Limit x-axis to 99th percentile for better readability
+    plt.show()
+
+def analyze_customer_value_distribution(df):
+    """Visualizes the distribution of total revenue per customer."""
+    print("\nAnalyzing customer value distribution...")
+    customer_revenue = df[df['Customer ID'] != 'Unknown'].groupby('Customer ID')['Revenue'].sum()
+    plt.figure(figsize=(12, 7))
+    sns.boxenplot(x=customer_revenue, palette='coolwarm')
+    plt.title('Distribution of Total Spend per Customer', fontsize=16)
+    plt.xlabel('Total Revenue per Customer', fontsize=12)
+    plt.xscale('log') # Use a log scale due to high skew
+    plt.show()
+
+def plot_correlation_heatmap(df):
+    """Plots a correlation heatmap of numerical features."""
+    print("\nPlotting feature correlation heatmap...")
+    numeric_cols = df[['Quantity', 'Price', 'Revenue', 'InvoiceMonth', 'InvoiceHour']].copy()
+    corr_matrix = numeric_cols.corr()
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', fmt=".2f", linewidths=.5)
+    plt.title('Correlation Matrix of Key Numerical Features', fontsize=16)
+    plt.show()
+
+
+# --- 5. REPORTING ---
+
+def print_summary_report(performer_data, temporal_data, customer_data):
+    """Prints a summary of all key business insights and recommendations."""
+    # Extract insights
+    top_product = performer_data['top_products'].index[0]
+    top_country = performer_data['top_countries'].index[0]
+    month_names = {1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr', 5: 'May', 6: 'Jun', 7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'}
+    top_month_name = month_names[temporal_data['monthly'].idxmax()]
+    top_day = temporal_data['weekday'].idxmax()
+    top_hour = temporal_data['hourly'].idxmax()
+    returning_rev = customer_data['returning_revenue']
+    new_rev = customer_data['new_revenue']
+    total_rev = returning_rev + new_rev
+    returning_share = (returning_rev / total_rev) * 100 if total_rev > 0 else 0
+
     print("\n" + "="*60)
-    print("      ACTIONABLE BUSINESS INSIGHTS SUMMARY")
+    print("       ACTIONABLE BUSINESS INSIGHTS SUMMARY")
     print("="*60 + "\n")
     print("🚀 Top Performers:")
-    print(f"  - Top Revenue Product: '{top_performer_insights['top_revenue_product']}'")
-    print(f"  - Top Market (Country): '{top_performer_insights['top_revenue_country']}'")
-    print(f"  - Peak Sales Month: {top_performer_insights['top_revenue_month']}")
-    print(f"  - Busiest Day of the Week: {top_performer_insights['top_revenue_day']}")
-    print(f"  - Peak Sales Hour: {top_performer_insights['top_revenue_hour']}")
+    print(f"  - Top Revenue Product: '{top_product}'")
+    print(f"  - Top Market (Country): '{top_country}'")
+    print(f"  - Peak Sales Month: {top_month_name}")
+    print(f"  - Busiest Day of the Week: {top_day}")
+    print(f"  - Peak Sales Hour: {top_hour}:00 - {top_hour+1}:00")
     print("\n" + "-"*60 + "\n")
     print("📈 Customer Behavior Insights:")
-    print(f"  - Revenue from Returning Customers: ${additional_insights['returning_customer_revenue']:,}")
-    print(f"  - Revenue from New Customers: ${additional_insights['new_customer_revenue']:,}")
-    print(f"  - Returning customers drive {additional_insights['returning_customer_revenue_share']:.1f}% of the total identified customer revenue.")
+    print(f"  - Revenue from Returning Customers: ${returning_rev:,.2f}")
+    print(f"  - Revenue from New Customers: ${new_rev:,.2f}")
+    print(f"  - Returning customers drive {returning_share:.1f}% of identified customer revenue.")
     print("\n" + "="*60)
     print("\n💡 Recommendations:")
     print("  1. Marketing: Focus campaigns around peak times (e.g., midday on Thursdays in November). Launch targeted ads in top-performing countries.")
-    print("  2. Inventory: Ensure top products are well-stocked, especially before peak season. Consider bundling them with less popular items.")
-    print("  3. Customer Retention: Since returning customers generate the vast majority of revenue, invest heavily in loyalty programs and personalized offers to retain them.")
-    print("  4. Customer Acquisition: Develop a welcome offer or a discount on the second purchase to convert new customers into returning ones.")
+    print("  2. Inventory: Ensure top products (by both revenue and quantity) are well-stocked. Use top quantity sellers as potential items for promotions.")
+    print("  3. Customer Retention: Since returning customers are vital, invest heavily in loyalty programs and personalized offers.")
+    print("  4. Upselling: Given the typical basket size, create promotions to encourage adding one more item (e.g., 'spend X, get a discount').")
     print("="*60)
 
+# --- 6. MAIN EXECUTION ---
+
+def main():
+    """Main function to run the entire analysis pipeline."""
+    filepath = '/content/online_retail_II.xlsx'
+
+    # Step 1: Load and Preprocess Data
+    raw_df = load_data(filepath)
+    if raw_df is None:
+        return
+    clean_df = preprocess_pipeline(raw_df)
+
+    # Step 2: Perform Core EDA and gather primary insights
+    performer_data = analyze_top_performers_by_revenue(clean_df)
+    temporal_data = analyze_temporal_trends(clean_df)
+    customer_data = analyze_customer_behavior(clean_df)
+    plot_geographic_heatmap(clean_df)
+
+    # Step 3: Perform Additional Deep-Dive EDA for more insights
+    analyze_top_performers_by_quantity(clean_df)
+    analyze_price_distribution(clean_df)
+    analyze_basket_size(clean_df)
+    analyze_customer_value_distribution(clean_df)
+    plot_correlation_heatmap(clean_df)
+
+    # Step 4: Print the final summary report
+    print_summary_report(performer_data, temporal_data, customer_data)
 
 if __name__ == "__main__":
     main()
