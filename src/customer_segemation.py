@@ -95,22 +95,28 @@ def assign_business_actions(rfm_df: pd.DataFrame) -> pd.DataFrame:
     """Assigns suggested business actions to each customer segment."""
     print("Step 5: Assigning business actions...")
     business_actions = {
-        "Hibernating": "Re-engage with reminder emails, seasonal promotions.",
-        "Loyal Customers": "Strengthen relationship with exclusive offers, loyalty rewards.",
-        "Champions": "Reward with VIP programs, personalized gifts, and ambassador opportunities.",
-        "At Risk": "Launch win-back campaigns, offer special discounts, and request feedback.",
-        "Potential Loyalists": "Nurture with targeted recommendations and membership incentives.",
-        "About to Sleep": "Send wake-up campaigns, birthday/anniversary offers.",
-        "Need Attention": "Use personalized outreach, highlight trending products, and send surveys.",
-        "Can't Lose Them": "Offer strong retention incentives and reactivation bundles.",
-        "Promising": "Encourage repeat purchases with targeted recommendations and cross-selling.",
-        "New Customers": "Deliver a strong onboarding experience and welcome discounts."
+        "Hibernating": "-> Re-engage with reminder emails, seasonal promotions.",
+        "Loyal Customers": "-> Strengthen relationship with exclusive offers, loyalty rewards.",
+        "Champions": "-> Reward with VIP programs, personalized gifts, and ambassador opportunities.",
+        "At Risk": "-> Launch win-back campaigns, offer special discounts, and request feedback.",
+        "Potential Loyalists": "-> Nurture with targeted recommendations and membership incentives.",
+        "About to Sleep": "-> Send wake-up campaigns, birthday/anniversary offers.",
+        "Need Attention": "-> Use personalized outreach, highlight trending products, and send surveys.",
+        "Can't Lose Them": "-> Offer strong retention incentives and reactivation bundles.",
+        "Promising": "-> Encourage repeat purchases with targeted recommendations and cross-selling.",
+        "New Customers": "-> Deliver a strong onboarding experience and welcome discounts."
     }
     rfm_df["Action"] = rfm_df["Segment"].map(business_actions)
     print("-> Actions assigned.")
     return rfm_df
 
-# --- 4. VISUALIZATION ---
+# --- 4. REPORTING AND VISUALIZATION ---
+
+def display_segment_actions_table(rfm_df: pd.DataFrame):
+    """Displays a summary table of segments and their required actions."""
+    print("\n--- Summary of Customer Segments and Actions ---")
+    segment_actions = rfm_df[['Segment', 'Action']].drop_duplicates().sort_values(by='Segment').reset_index(drop=True)
+    print(segment_actions.to_string(index=False))
 
 def plot_segment_distribution(rfm_df: pd.DataFrame):
     """Plots a bar chart of the customer segment distribution."""
@@ -124,7 +130,7 @@ def plot_segment_distribution(rfm_df: pd.DataFrame):
     plt.show()
 
 def plot_recency_vs_frequency(rfm_df: pd.DataFrame):
-    """Plots a scatter plot of Recency vs. Frequency, colored by segment ."""
+    """Plots a scatter plot of Recency vs. Frequency, colored by segment."""
     plt.figure(figsize=(12, 8))
     sns.scatterplot(data=rfm_df, x='Recency', y='Frequency', hue='Segment', palette='viridis', s=80, alpha=0.7)
     plt.title('Recency vs. Frequency by Segment', fontsize=16)
@@ -168,6 +174,9 @@ def rfm_analysis_pipeline(
     rfm_scored = assign_rfm_scores(rfm_metrics)
     rfm_segmented = segment_customers(rfm_scored)
     rfm_final = assign_business_actions(rfm_segmented)
+
+    # Display the summary table of actions
+    display_segment_actions_table(rfm_final)
 
     # Save results to a CSV file if a path is provided
     if output_csv_path:
