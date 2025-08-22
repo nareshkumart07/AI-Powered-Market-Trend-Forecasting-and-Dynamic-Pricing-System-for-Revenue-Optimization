@@ -39,12 +39,21 @@ class LSTMModel(nn.Module):
 
 # --- STEP 2: DATA PREPARATION AND FEATURE ENGINEERING ---
 
-def prepare_data_for_product(
-    df: pd.DataFrame, product_stock_code: str, date_col: str, date_format: str,
-    quantity_col: str, stock_code_col: str
+def prepare_and_engineer_features(
+    df: pd.DataFrame,
+    product_stock_code: str,
+    date_col: str,
+    date_format: str,
+    quantity_col: str,
+    stock_code_col: str,
+    competitor_data_path: str
 ) -> Optional[pd.DataFrame]:
-    """Filters data for a specific product and resamples it to a daily frequency."""
-    print("--- Step 2a: Preparing and Resampling Data ---")
+    """
+    Filters, prepares, merges competitor data, and engineers features.
+    """
+    print("--- Step 2: Preparing data, merging competitor prices, and engineering features ---")
+    
+    # --- Step 2a: Preparing and Resampling Data ---
     product_df = df[df[stock_code_col] == product_stock_code].copy()
     if product_df.empty:
         print(f"Error: No data found for StockCode {product_stock_code}.")
@@ -57,12 +66,28 @@ def prepare_data_for_product(
         
     product_df.set_index(date_col, inplace=True)
     daily_sales_df = product_df.resample('D')[quantity_col].sum().to_frame()
-    return daily_sales_df
 
-def engineer_features(daily_df: pd.DataFrame, quantity_col: str) -> pd.DataFrame:
-    """Engineers time-series features like lags, rolling stats, and holiday flags."""
-    print("--- Step 2b: Engineering Features ---")
-    df_featured = daily_df.copy()
+    # --- Load and Merge Competitor Price Data ---
+    print(" -> Loading and merging competitor price data...")
+    comp_df = pd.read_csv(competitor_data_path)
+    comp_date_col = 'Date'
+    price_cols = ['our_price', 'competitor_A', 'competitor_B', 'competitor_C']
+
+    if not all(col in comp_df.columns for col in [comp_date_col] + price_cols):
+        raise ValueError(f"Competitor data CSV must contain '{comp_date_col}' and all price columns: {price_cols}.")
+
+    comp_df[comp_date_col] = pd.to_datetime(comp_df[comp_date_col], errors='coerce')
+    comp_df.set_index(comp_date_col, inplace=True)
+    daily_comp_prices = comp_df.resample('D').mean()
+    
+    daily_sales_df = daily_sales_df.merge(daily_comp_prices, left_index=True, right_index=True, how='left')
+    
+    for col in price_cols:
+        daily_sales_df[col].ffill(inplace=True)
+        daily_sales_df[col].bfill(inplace=True)
+
+    # --- Step 2b: Engineering Features ---
+    df_featured = daily_sales_df.copy()
     df_featured['day_of_week'] = df_featured.index.dayofweek
     df_featured['month'] = df_featured.index.month
     for i in [1, 7, 30]:
@@ -200,7 +225,54 @@ def evaluate_model(
     results_df = pd.DataFrame({'Actual': y_test_actual, 'Predicted': predictions})
     return results_df, metrics
 
-# --- STEP 6: VISUALIZATION AND INSIGHTS ---
+# --- STEP 6: FUTURE FORECASTING ---
+
+def generate_future_forecasts(
+    model: LSTMModel,
+    daily_df: pd.DataFrame,
+    scaler: MinMaxScaler,
+    seq_length: int,
+    target_col_idx: int,
+    num_features: int,
+    num_days: int
+) -> pd.DataFrame:
+    """Generates a forecast for a specified number of future days."""
+    print(f"--- Step 6: Generating future forecast for the next {num_days} days ---")
+    model.eval()
+    
+    # Get the last sequence from the data and scale it
+    last_sequence_scaled = scaler.transform(daily_df.tail(seq_length))
+    current_sequence = torch.from_numpy(last_sequence_scaled).unsqueeze(0).float()
+    
+    future_predictions_scaled = []
+    with torch.no_grad():
+        for _ in range(num_days):
+            prediction = model(current_sequence)
+            future_predictions_scaled.append(prediction.item())
+            
+            # Create a new row for the next sequence input
+            # This is a simplified approach; in a real scenario, you'd need to forecast future features too
+            new_row_scaled = current_sequence.numpy().squeeze()[-1].copy()
+            new_row_scaled[target_col_idx] = prediction.item()
+            
+            # Append the new row and drop the first row to update the sequence
+            new_sequence_np = np.vstack([current_sequence.numpy().squeeze()[1:], new_row_scaled])
+            current_sequence = torch.from_numpy(new_sequence_np).unsqueeze(0).float()
+
+    # Inverse transform the predictions
+    future_predictions_full = np.zeros((len(future_predictions_scaled), num_features))
+    future_predictions_full[:, target_col_idx] = future_predictions_scaled
+    future_predictions = scaler.inverse_transform(future_predictions_full)[:, target_col_idx]
+    
+    # Create future dates
+    last_date = daily_df.index[-1]
+    future_dates = pd.to_datetime([last_date + pd.DateOffset(days=i) for i in range(1, num_days + 1)])
+    
+    future_df = pd.DataFrame({'Date': future_dates, 'Future_Forecast': future_predictions})
+    future_df.set_index('Date', inplace=True)
+    return future_df
+
+# --- STEP 7: VISUALIZATION AND INSIGHTS ---
 
 def plot_training_history(history: Dict):
     """Plots the training and validation loss over epochs."""
@@ -214,14 +286,18 @@ def plot_training_history(history: Dict):
     plt.grid(True)
     plt.show()
 
-def plot_forecast_vs_actuals(results_df: pd.DataFrame, daily_sales_index: pd.Index, product_stock_code: str):
-    """Plots the final forecast against the actual sales data."""
-    print("--- Step 6a: Plotting forecast results ---")
+def plot_forecast_vs_actuals(results_df: pd.DataFrame, daily_sales_index: pd.Index, product_stock_code: str, future_df: Optional[pd.DataFrame] = None):
+    """Plots the final forecast against the actual sales data, including future predictions."""
+    print("--- Step 7a: Plotting forecast results ---")
     results_df.index = daily_sales_index[-len(results_df):]
     plt.style.use('seaborn-v0_8-whitegrid')
     plt.figure(figsize=(15, 8))
     plt.plot(results_df.index, results_df['Actual'], label='Actual Sales', color='royalblue', linewidth=2)
-    plt.plot(results_df.index, results_df['Predicted'], label='Predicted Sales', color='tomato', linestyle='--', marker='o', markersize=4)
+    plt.plot(results_df.index, results_df['Predicted'], label='Predicted Sales (Test Set)', color='tomato', linestyle='--', marker='o', markersize=4)
+    
+    if future_df is not None:
+        plt.plot(future_df.index, future_df['Future_Forecast'], label='Future Forecast', color='green', linestyle=':', marker='x')
+
     plt.fill_between(results_df.index, results_df['Actual'], results_df['Predicted'], color='gray', alpha=0.2, label='Prediction Error')
     plt.title(f'LSTM Sales Forecast vs. Actuals for Product: {product_stock_code}', fontsize=16, fontweight='bold')
     plt.xlabel('Date', fontsize=12); plt.ylabel('Quantity Sold', fontsize=12)
@@ -230,7 +306,7 @@ def plot_forecast_vs_actuals(results_df: pd.DataFrame, daily_sales_index: pd.Ind
 
 def generate_insights_and_diagnostics(daily_df: pd.DataFrame, quantity_col: str, product_stock_code: str, metrics: Dict):
     """Generates diagnostic plots and prints actionable business insights."""
-    print("--- Step 6b: Generating insights and diagnostic plots ---")
+    print("--- Step 7b: Generating insights and diagnostic plots ---")
     day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     
     # Print insights
@@ -252,23 +328,34 @@ def generate_insights_and_diagnostics(daily_df: pd.DataFrame, quantity_col: str,
     plt.xticks(ticks=range(7), labels=day_names, rotation=45); plt.grid(axis='y')
     plt.show()
 
-# --- 7. MAIN PIPELINE ORCHESTRATOR ---
+# --- 8. MAIN PIPELINE ORCHESTRATOR ---
 
 def run_lstm_forecasting_pipeline(
-    df: pd.DataFrame, product_stock_code: str, date_col: str = 'InvoiceDate',
-    date_format: str = '%d-%m-%Y %H:%M', quantity_col: str = 'Quantity',
-    stock_code_col: str = 'StockCode', seq_length: int = 60, forecast_horizon: int = 1,
-    train_split_ratio: float = 0.7, val_split_ratio: float = 0.15,
-    model_params: Dict = None, training_params: Dict = None, seed: int = 42
-) -> Tuple[Optional[LSTMModel], Optional[pd.DataFrame], Optional[Dict[str, float]]]:
+    df: pd.DataFrame,
+    product_stock_code: str,
+    competitor_data_path: str,
+    date_col: str = 'InvoiceDate',
+    date_format: str = '%d-%m-%Y %H:%M',
+    quantity_col: str = 'Quantity',
+    stock_code_col: str = 'StockCode',
+    seq_length: int = 60,
+    forecast_horizon: int = 1,
+    train_split_ratio: float = 0.7,
+    val_split_ratio: float = 0.15,
+    future_forecast_days: int = 15, # ✨ NEW
+    model_params: Dict = None,
+    training_params: Dict = None,
+    seed: int = 42
+) -> Tuple[Optional[LSTMModel], Optional[pd.DataFrame], Optional[Dict[str, float]], Optional[pd.DataFrame]]:
     """Orchestrates the complete time-series forecasting pipeline."""
     print(f"--- Starting LSTM Forecast Pipeline for Product: {product_stock_code} ---")
     torch.manual_seed(seed); np.random.seed(seed); random.seed(seed)
 
-    # Step 2: Data Prep
-    daily_sales_df = prepare_data_for_product(df, product_stock_code, date_col, date_format, quantity_col, stock_code_col)
-    if daily_sales_df is None: return None, None, None
-    daily_sales_df = engineer_features(daily_sales_df, quantity_col)
+    # Step 2: Data Prep & Feature Engineering
+    daily_sales_df = prepare_and_engineer_features(
+        df, product_stock_code, date_col, date_format, quantity_col, stock_code_col, competitor_data_path
+    )
+    if daily_sales_df is None: return None, None, None, None
 
     # Step 3: Data Processing
     X, y, scaler, target_col_idx = scale_and_create_sequences(daily_sales_df, quantity_col, seq_length, forecast_horizon)
@@ -281,32 +368,48 @@ def run_lstm_forecasting_pipeline(
         training_params = {'num_epochs': 100, 'learning_rate': 0.001, 'patience': 25}
     model, history = train_lstm_model(train_loader, val_loader, model_params, training_params)
 
-    # Step 5 & 6: Evaluation and Reporting
+    # Step 5: Evaluation
     results_df, metrics = evaluate_model(model, test_loader, scaler, y_test, target_col_idx, daily_sales_df.shape[1])
     
+    # Step 6: Future Forecasting
+    future_df = generate_future_forecasts(
+        model=model,
+        daily_df=daily_sales_df,
+        scaler=scaler,
+        seq_length=seq_length,
+        target_col_idx=target_col_idx,
+        num_features=daily_sales_df.shape[1],
+        num_days=future_forecast_days
+    )
+
+    # Step 7 & 8: Visualization and Reporting
     plot_training_history(history)
-    plot_forecast_vs_actuals(results_df, daily_sales_df.index, product_stock_code)
+    plot_forecast_vs_actuals(results_df, daily_sales_df.index, product_stock_code, future_df)
     generate_insights_and_diagnostics(daily_sales_df, quantity_col, product_stock_code, metrics)
 
     print(f"\n--- Pipeline Finished for Product: {product_stock_code} ---")
-    return model, results_df, metrics
+    return model, results_df, metrics, future_df
 
 # --- HOW TO USE THE FUNCTION IN A PIPELINE ---
 if __name__ == '__main__':
     try:
-        DATA_FILE_PATH = "/content/refine_file.csv"
+        DATA_FILE_PATH = "refine_file.csv"
+        COMPETITOR_DATA_PATH = "/content/our_and_competitor_prices.csv"
+        
         main_df = pd.read_csv(DATA_FILE_PATH)
         product_to_forecast = '85099B'
         
-        trained_model, predictions_df, performance_metrics = run_lstm_forecasting_pipeline(
+        trained_model, predictions_df, performance_metrics, future_predictions_df = run_lstm_forecasting_pipeline(
             df=main_df,
-            product_stock_code=product_to_forecast
+            product_stock_code=product_to_forecast,
+            competitor_data_path=COMPETITOR_DATA_PATH,
+            future_forecast_days=15 # ✨ Set to 15 days
         )
         
-        if predictions_df is not None:
-            print("\n--- LSTM Forecast Results (Last 10 Days) ---")
-            print(predictions_df.tail(10))
-    except FileNotFoundError:
-        print(f"Error: The file at '{DATA_FILE_PATH}' was not found. Please check the path.")
+        if future_predictions_df is not None:
+            print("\n--- LSTM Future Forecast (Next 15 Days) ---")
+            print(future_predictions_df)
+    except FileNotFoundError as e:
+        print(f"Error: A required data file was not found. Details: {e}")
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
