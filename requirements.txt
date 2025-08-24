@@ -5,3 +5,4 @@ plotly
 scikit-learn
 torch
 matplotlib.pyplot
+pip install --upgrade pip
